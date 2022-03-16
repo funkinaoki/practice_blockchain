@@ -9,10 +9,17 @@ import (
 	"time"
 )
 
+const (
+	MINING_DIFFICULTY = 3
+	MINING_SENDER     = "THE BLOCKCHAIN"
+	MINING_REWARD     = 1.0
+)
+
+// ---------------------------------------------------------------------------
 type Block struct {
+	timestamp    int64
 	nonce        int
 	previousHash [32]byte
-	timestamp    int64
 	transactions []*Transaction
 }
 
@@ -56,13 +63,15 @@ func (b *Block) MarshalJSON() ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 type BlockChain struct {
-	transactionPool []*Transaction
-	chain           []*Block
+	transactionPool   []*Transaction
+	chain             []*Block
+	blockchainAddress string
 }
 
-func NewBlockChain() *BlockChain {
+func NewBlockChain(blockchainAddress string) *BlockChain {
 	b := &Block{}
 	bc := new(BlockChain)
+	bc.blockchainAddress = blockchainAddress
 	bc.CreateBlock(0, b.Hash())
 	return bc
 }
@@ -90,6 +99,61 @@ func (bc *BlockChain) Print() {
 func (bc *BlockChain) AddTransaction(sender string, recipient string, value float32) {
 	t := NewTransAction(sender, recipient, value)
 	bc.transactionPool = append(bc.transactionPool, t)
+}
+
+func (bc *BlockChain) CopyTransactionPool() []*Transaction {
+	transactions := make([]*Transaction, 0)
+	for _, t := range bc.transactionPool {
+		transactions = append(transactions, NewTransAction(t.senderBlockchainAddress, t.recipientBlockChainAddress, t.value))
+	}
+	return transactions
+}
+
+func (bc *BlockChain) ValidProof(nonce int, previousHash [32]byte, transactions []*Transaction, difficulty int) bool {
+	zeros := strings.Repeat("0", difficulty)
+	guessBlock := Block{0, nonce, previousHash, transactions}
+	guessHashStr := fmt.Sprintf("%x", guessBlock.Hash())
+	//先頭が000か判定
+	return guessHashStr[:difficulty] == zeros
+}
+
+func (bc *BlockChain) ProofOfWork() int {
+	transactions := bc.CopyTransactionPool()
+	previousHash := bc.LastBlock().Hash()
+	nonce := 0
+	for !bc.ValidProof(nonce, previousHash, transactions, MINING_DIFFICULTY) {
+		nonce += 1
+	}
+	//000になるnonceを試す
+	return nonce
+}
+
+func (bc *BlockChain) Mining() bool {
+	bc.AddTransaction(MINING_SENDER, bc.blockchainAddress, MINING_REWARD)
+	//マイニングの処理
+	nonce := bc.ProofOfWork()
+	//
+	previousHash := bc.LastBlock().Hash()
+	bc.CreateBlock(nonce, previousHash)
+	log.Println("action=mining, status=success")
+	return true
+}
+
+func (bc *BlockChain) CalculateTotalAmount(blockchainAddress string) float32 {
+	var totalAmount float32 = 0.0
+	for _, b := range bc.chain {
+		for _, t := range b.transactions {
+			value := t.value
+			if blockchainAddress == t.recipientBlockChainAddress {
+				totalAmount += value
+			}
+
+			if blockchainAddress == t.senderBlockchainAddress {
+				totalAmount -= value
+			}
+		}
+	}
+	return totalAmount
 }
 
 // ---------------------------------------------------------------------------
@@ -124,21 +188,25 @@ func (t *Transaction) MarshalJSON() ([]byte, error) {
 }
 
 // ---------------------------------------------------------------------------
+
 func init() {
 	log.SetPrefix("Blockchain: ")
 }
 func main() {
-	blockchain := NewBlockChain()
+	myBlockchainAddress := "my_blockchain_address"
+	blockchain := NewBlockChain(myBlockchainAddress)
 	blockchain.Print()
 
 	blockchain.AddTransaction("A", "B", 1.0)
-	previousHash := blockchain.LastBlock().Hash()
-	blockchain.CreateBlock(5, previousHash)
+	blockchain.Mining()
 	blockchain.Print()
 
 	blockchain.AddTransaction("B", "C", 3.0)
 	blockchain.AddTransaction("X", "Y", 1.0)
-	previousHash = blockchain.LastBlock().Hash()
-	blockchain.CreateBlock(2, previousHash)
+	blockchain.Mining()
 	blockchain.Print()
+
+	fmt.Printf("Me %.1f\n", blockchain.CalculateTotalAmount("my_blockchain_address"))
+	fmt.Printf("C %.1f\n", blockchain.CalculateTotalAmount("C"))
+	fmt.Printf("B %.1f\n", blockchain.CalculateTotalAmount("B"))
 }
